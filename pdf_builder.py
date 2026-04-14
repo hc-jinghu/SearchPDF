@@ -1,21 +1,24 @@
 """
 pdf_builder.py
-Converts a single image + PaddleOCR results into a searchable PDF.
+Converts a single image + OCR results into a searchable PDF.
 
 Pipeline:
-  1. Open image to get pixel dimensions.
-  2. Create a new PDF page (same size as image in points 1pt = 1px here).
-  3. Embed the original image at full quality (JPEG stays JPEG, PNG stays PNG).
+  1. Open image, apply EXIF orientation so dimensions and pixels match
+     what Apple Vision sees when it produces OCR coordinates.
+  2. Create a new PDF page (same size as the corrected image in points).
+  3. Embed the orientation-corrected image.
   4. Overlay each OCR text string as invisible text (PDF render mode 3)
-     positioned at the bounding box returned by PaddleOCR.
+     positioned at the bounding box returned by the OCR engine.
 
 The result is visually identical to the original image but fully Ctrl+F searchable.
 """
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 MIN_CONFIDENCE = 0.30   # discard OCR results below this threshold
@@ -28,29 +31,24 @@ def build_pdf_page(image_path: str, ocr_lines: list) -> fitz.Document:
     Returns the fitz.Document (not saved to disk) so the caller can either
     save it directly or merge it into a combined document.
     """
-    # --- 1. Image dimensions ---
-    with Image.open(image_path) as img:
+    # --- 1. Open image and apply EXIF orientation ---
+    # ImageOps.exif_transpose() rotates/flips the pixel data to match the
+    # orientation tag, so the dimensions and coordinates all agree with what
+    # Apple Vision sees when it processes the image.
+    with Image.open(image_path) as raw:
+        img = ImageOps.exif_transpose(raw)
         img_w, img_h = img.size
-        # WebP and some exotic formats need transcoding before PyMuPDF can embed them
-        needs_transcode = img.format not in ("JPEG", "PNG", "BMP", "TIFF")
-        if needs_transcode:
-            from io import BytesIO
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            img_data = buf.getvalue()
-        else:
-            img_data = None
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        img_data = buf.getvalue()
 
-    # --- 2. New PDF document, one page matching image pixel size ---
+    # --- 2. New PDF document, one page matching corrected image size ---
     doc  = fitz.open()
     page = doc.new_page(width=img_w, height=img_h)
     rect = fitz.Rect(0, 0, img_w, img_h)
 
-    # --- 3. Embed image (lossless for PNG/TIFF, original encoding for JPEG) ---
-    if img_data is not None:
-        page.insert_image(rect, stream=img_data)
-    else:
-        page.insert_image(rect, filename=image_path)
+    # --- 3. Embed the orientation-corrected image ---
+    page.insert_image(rect, stream=img_data)
 
     # --- 4. Invisible text overlay ---
     for item in ocr_lines:
