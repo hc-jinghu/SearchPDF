@@ -367,6 +367,7 @@ class MainWindow(QMainWindow):
             f"Started — {len(files)} file(s) | lang={lang_code} | output: {mode} → {self.output_dir}"
         )
         self._log("Note: first run downloads PaddleOCR models (~100 MB), please wait.")
+        self._log("Large images may take several minutes at 10% — this is normal.")
 
     def _cancel(self):
         if self.worker:

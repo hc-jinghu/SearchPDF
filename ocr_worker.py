@@ -73,11 +73,20 @@ class OCRWorker(QThread):
             try:
                 self.progress.emit(filename, 10)
 
-                raw = ocr.ocr(file_path)
+                # Pre-resize images larger than OCR_MAX_SIDE before handing
+                # to PaddleOCR — avoids its internal resize warning and
+                # significantly reduces CPU time on high-res scans.
+                ocr_input, tmp_path = self._prepare_image(file_path)
+
+                raw = ocr.ocr(ocr_input)
 
                 self.progress.emit(filename, 60)
 
                 lines = self._normalise_result(raw)
+
+                # Clean up temp file if one was created
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
                 self.progress.emit(filename, 75)
 
@@ -94,6 +103,8 @@ class OCRWorker(QThread):
                 self.file_done.emit(filename, time.time() - start)
 
             except Exception as exc:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
                 self.file_error.emit(filename, str(exc))
 
         if self.combine and combined_docs and not self._cancelled:
@@ -104,6 +115,43 @@ class OCRWorker(QThread):
                 self.file_error.emit("combined", f"Failed to merge PDFs: {exc}")
 
         self.all_done.emit()
+
+    # ------------------------------------------------------------------
+    # Images larger than this (longest side, px) are downscaled before OCR.
+    # PaddleOCR's own limit is 4000; staying under it avoids its internal
+    # resize and speeds up CPU inference noticeably.
+    OCR_MAX_SIDE = 3500
+
+    @staticmethod
+    def _prepare_image(file_path: str) -> tuple[str, str | None]:
+        """
+        If the image exceeds OCR_MAX_SIDE on either dimension, write a
+        downscaled copy to a temp file and return its path alongside the
+        original.  Otherwise return the original path and None.
+
+        Returns (ocr_input_path, tmp_path_or_None)
+        """
+        import tempfile
+        from PIL import Image
+
+        with Image.open(file_path) as img:
+            w, h = img.size
+            max_side = max(w, h)
+            if max_side <= OCRWorker.OCR_MAX_SIDE:
+                return file_path, None
+
+            scale  = OCRWorker.OCR_MAX_SIDE / max_side
+            new_w  = int(w * scale)
+            new_h  = int(h * scale)
+            resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+            suffix = Path(file_path).suffix or ".png"
+            tmp    = tempfile.NamedTemporaryFile(
+                suffix=suffix, delete=False, prefix="searchpdf_"
+            )
+            resized.save(tmp.name)
+            tmp.close()
+            return tmp.name, tmp.name
 
     # ------------------------------------------------------------------
     def cancel(self):
