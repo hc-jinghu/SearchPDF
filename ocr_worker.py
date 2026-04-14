@@ -65,7 +65,7 @@ class OCRWorker(QThread):
             try:
                 self.progress.emit(filename, 10)
 
-                raw = ocr.ocr(file_path, cls=True)
+                raw = ocr.ocr(file_path)
 
                 self.progress.emit(filename, 60)
 
