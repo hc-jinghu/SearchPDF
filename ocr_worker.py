@@ -32,6 +32,11 @@ class OCRWorker(QThread):
 
     # ------------------------------------------------------------------
     def run(self):
+        # Must be set before PaddlePaddle loads — disables the oneDNN backend
+        # that triggers a PIR attribute conversion crash on Windows with
+        # PaddlePaddle 3.x (onednn_instruction.cc:118)
+        os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
         # Import here so errors surface as signals, not crashes
         try:
             from paddleocr import PaddleOCR
@@ -43,11 +48,14 @@ class OCRWorker(QThread):
         from pdf_builder import build_pdf_page, build_searchable_pdf, merge_pdfs
 
         # Initialise once; PaddleOCR downloads models on first use (~100 MB)
-        # show_log was removed in PaddleOCR >=2.8; suppress via logging module instead
+        # show_log was removed in >=2.8; use_angle_cls removed in >=3.x
         try:
             import logging
             logging.getLogger("ppocr").setLevel(logging.ERROR)
-            ocr = PaddleOCR(use_angle_cls=True, lang=self.language)
+            try:
+                ocr = PaddleOCR(use_angle_cls=True, lang=self.language)
+            except TypeError:
+                ocr = PaddleOCR(lang=self.language)
         except Exception as exc:
             self.file_error.emit("setup", f"Failed to initialise PaddleOCR: {exc}")
             self.all_done.emit()
@@ -105,13 +113,30 @@ class OCRWorker(QThread):
     @staticmethod
     def _normalise_result(raw) -> list:
         """
-        PaddleOCR changed its return format between versions.
-        Normalise to a flat list of [bbox, (text, score)] items.
+        Normalise PaddleOCR output to a flat list of [bbox, (text, score)] items.
+
+        Known formats:
+          v2.x old  [line, line, ...]               line = [bbox, (text, conf)]
+          v2.6+     [[line, line, ...]]              one sublist per page
+          v3.x      [{'transcription':, 'points':, 'score':}, ...]
         """
-        if raw is None:
+        if not raw:
             return []
 
-        # New format (>=2.6):  [[line, line, ...]]   (list-of-pages)
+        # v3.x dict format
+        if isinstance(raw, list) and raw and isinstance(raw[0], dict):
+            result = []
+            for item in raw:
+                try:
+                    bbox = item["points"]
+                    text = item.get("transcription", "")
+                    score = float(item.get("score", 1.0))
+                    result.append([bbox, (text, score)])
+                except (KeyError, TypeError):
+                    continue
+            return result
+
+        # v2.6+ page-wrapped format  [[line, ...]]
         if (
             isinstance(raw, list)
             and len(raw) > 0
@@ -121,5 +146,5 @@ class OCRWorker(QThread):
         ):
             return raw[0] if raw[0] is not None else []
 
-        # Old format:  [line, line, ...]
-        return raw if raw else []
+        # v2.x flat format  [line, ...]
+        return raw
