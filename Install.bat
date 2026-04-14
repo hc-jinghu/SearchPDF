@@ -40,11 +40,18 @@ if errorlevel 1 (
 
 REM ── Create Desktop shortcut (.bat) ────────────────
 set PROJECT_DIR=%~dp0
-set SHORTCUT=%USERPROFILE%\Desktop\SearchPDF.bat
 
-echo @echo off                                          > "%SHORTCUT%"
-echo cd /d "%PROJECT_DIR%"                             >> "%SHORTCUT%"
-echo python main.py                                    >> "%SHORTCUT%"
+REM Resolve the real Desktop path (handles OneDrive redirection)
+for /f "tokens=2*" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders" /v Desktop 2^>nul') do set DESKTOP=%%b
+if not defined DESKTOP set DESKTOP=%USERPROFILE%\Desktop
+
+set SHORTCUT=%DESKTOP%\SearchPDF.bat
+
+(
+    echo @echo off
+    echo cd /d "%PROJECT_DIR%"
+    echo python main.py
+) > "%SHORTCUT%"
 
 echo.
 echo  ================================================
