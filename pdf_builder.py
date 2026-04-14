@@ -22,17 +22,11 @@ MIN_CONFIDENCE = 0.30   # discard OCR results below this threshold
 MIN_BOX_PX     = 2      # ignore degenerate bounding boxes
 
 
-def build_searchable_pdf(image_path: str, ocr_lines: list, output_path: str) -> None:
+def build_pdf_page(image_path: str, ocr_lines: list) -> fitz.Document:
     """
-    Parameters
-    ----------
-    image_path : str
-        Path to the source image (JPG, PNG, TIFF, BMP, WebP …).
-    ocr_lines : list
-        PaddleOCR result lines. Each element is:
-            [ [[x1,y1],[x2,y1],[x2,y2],[x1,y2]], ('text', confidence) ]
-    output_path : str
-        Where to write the resulting PDF.
+    Build a single-page searchable PDF document from an image and OCR results.
+    Returns the fitz.Document (not saved to disk) so the caller can either
+    save it directly or merge it into a combined document.
     """
     # --- 1. Image dimensions ---
     with Image.open(image_path) as img:
@@ -105,6 +99,26 @@ def build_searchable_pdf(image_path: str, ocr_lines: list, output_path: str) -> 
             # Never let a single bad token abort the whole page
             continue
 
-    # --- 5. Save with compression ---
+    return doc
+
+
+def build_searchable_pdf(image_path: str, ocr_lines: list, output_path: str) -> None:
+    """
+    Build a single-page searchable PDF and save it to output_path.
+    """
+    doc = build_pdf_page(image_path, ocr_lines)
     doc.save(output_path, garbage=4, deflate=True)
     doc.close()
+
+
+def merge_pdfs(source_docs: list[fitz.Document], output_path: str) -> None:
+    """
+    Merge a list of single-page fitz.Documents into one PDF and save it.
+    Each source doc is closed after its pages are copied.
+    """
+    combined = fitz.open()
+    for doc in source_docs:
+        combined.insert_pdf(doc)
+        doc.close()
+    combined.save(output_path, garbage=4, deflate=True)
+    combined.close()

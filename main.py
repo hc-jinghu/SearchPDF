@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem,
     QProgressBar, QTextEdit, QComboBox, QFrame, QLineEdit, QMessageBox,
-    QHeaderView,
+    QHeaderView, QCheckBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent
@@ -197,12 +197,16 @@ class MainWindow(QMainWindow):
             self.lang_combo.addItem(name)
         self.lang_combo.setFixedWidth(180)
 
+        self.combine_chk = QCheckBox("Combine into one PDF")
+
         ctrl.addWidget(out_lbl)
         ctrl.addWidget(self.out_edit, 3)
         ctrl.addWidget(out_btn)
         ctrl.addSpacing(16)
         ctrl.addWidget(lang_lbl)
         ctrl.addWidget(self.lang_combo)
+        ctrl.addSpacing(16)
+        ctrl.addWidget(self.combine_chk)
         layout.addLayout(ctrl)
 
         # Buttons row
@@ -348,7 +352,8 @@ class MainWindow(QMainWindow):
             self.table.item(row, 3).setText("—")
 
         lang_code = LANGUAGES[self.lang_combo.currentText()]
-        self.worker = OCRWorker(files, self.output_dir, lang_code)
+        combine   = self.combine_chk.isChecked()
+        self.worker = OCRWorker(files, self.output_dir, lang_code, combine=combine)
         self.worker.progress.connect(self._on_progress)
         self.worker.file_done.connect(self._on_file_done)
         self.worker.file_error.connect(self._on_file_error)
@@ -357,8 +362,9 @@ class MainWindow(QMainWindow):
 
         self.process_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
+        mode = "combined PDF" if combine else "individual PDFs"
         self._log(
-            f"Started — {len(files)} file(s) | lang={lang_code} | out={self.output_dir}"
+            f"Started — {len(files)} file(s) | lang={lang_code} | output: {mode} → {self.output_dir}"
         )
         self._log("Note: first run downloads PaddleOCR models (~100 MB), please wait.")
 
@@ -410,7 +416,10 @@ class MainWindow(QMainWindow):
         done  = sum(1 for r in range(self.table.rowCount())
                     if self.table.item(r, 1).text() == STATUS_DONE)
         total = self.table.rowCount()
-        self._log(f"Finished — {done}/{total} file(s) converted successfully.")
+        if self.combine_chk.isChecked() and done > 0:
+            self._log(f"Finished — {done}/{total} file(s) merged into SearchPDF_combined.pdf")
+        else:
+            self._log(f"Finished — {done}/{total} file(s) converted successfully.")
 
     # -----------------------------------------------------------------------
     # Log helper
